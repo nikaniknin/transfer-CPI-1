@@ -1,0 +1,275 @@
+### Visual Studio Code Setup
+
+1. **Install Rust and Solana CLI:**
+
+   If you haven't already, install Rust and Solana CLI:
+   ```bash
+   # Install Rust
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   source $HOME/.cargo/env
+
+   # Install Solana CLI
+   sh -c "$(curl -sSfL https://release.solana.com/v1.10.30/install)"
+   ```
+
+2. **Set Solana CLI to devnet and configure keypair:**
+   ```bash
+   solana config set --url https://api.devnet.solana.com
+   solana-keygen new --outfile ~/.config/solana/devnet-keypair.json
+   solana config set --keypair ~/.config/solana/devnet-keypair.json
+   ```
+
+### Step 1: Create and Deploy Solana Program
+
+**Step 1.1:** Initialize a new Rust-based Solana program:
+```bash
+cargo new --lib solana_transfer_program
+cd solana_transfer_program
+```
+
+**Step 1.2:** Update `Cargo.toml` file:
+Replace its content:
+
+```toml
+[package]
+name = "solana_transfer_program"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+solana-program = "1.10"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+```
+
+**Step 1.3:** Write the Solana program in `src/lib.rs`:
+Replace the content:
+
+```rust
+use solana_program::{
+    account_info::{next_account_info, AccountInfo},
+    entrypoint,
+    entrypoint::ProgramResult,
+    pubkey::Pubkey,
+    system_instruction,
+    program::invoke,
+};
+
+// Entry point for the program
+entrypoint!(process_instruction);
+
+fn process_instruction(
+    _program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    _instruction_data: &[u8],
+) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+    let from_account = next_account_info(accounts_iter)?;
+    let to_account = next_account_info(accounts_iter)?;
+    let system_program_account = next_account_info(accounts_iter)?;
+
+    let transfer_amount = 1_000_000; // Amount in lamports (0.001 SOL)
+
+    let ix = system_instruction::transfer(
+        from_account.key,
+        to_account.key,
+        transfer_amount,
+    );
+
+    invoke(
+        &ix,
+        &[
+            from_account.clone(),
+            to_account.clone(),
+            system_program_account.clone(),
+        ],
+    )?;
+
+    Ok(())
+}
+
+```
+
+### Explanation:
+- **`Cargo.toml` Fixes:** We removed the `features` line since it is causing version conflicts and doesn't seem to be required.
+- **`llvm-ar` and `clang`:** These are necessary for building BPF programs on an M1 Mac.
+- **Exporting Environment Variables:** Ensures the build process uses the correct tools.
+
+**Step 1.4:** Build and deploy the program:
+
+If you encounter issues with `cargo build-sbf` on M1, use:
+
+```bash
+cargo install cargo-binutils
+rustup component add llvm-tools-preview
+brew install llvm
+export AR=$(brew --prefix llvm)/bin/llvm-ar
+export CC=$(brew --prefix llvm)/bin/clang
+
+cargo build-bpf
+solana program deploy target/deploy/solana_transfer_program.so
+
+Might be an error message is indicating that your account does not have sufficient SOL to deploy the program. You'll need to ensure that your account has enough SOL to cover the deployment costs plus the transaction fee.
+
+Here are the steps to resolve this issue:
+
+### Step 1: Check Your Account Balance
+First, let's ensure you have some SOL in your wallet. Run the following command to check your balance:
+```bash
+solana balance
+```
+
+### Step 2: Airdrop SOL to Your Account
+If your balance is low, you can request an airdrop of SOL to your account from the devnet:
+```bash
+solana airdrop 1  # This will airdrop 1 SOL, adjust the amount if needed
+```
+
+### Step 3: Verify the Balance Again
+After the airdrop, verify that the balance has been updated:
+```bash
+solana balance
+```
+
+### Step 4: Deploy Your Program
+Once you have sufficient funds, try deploying your program again:
+```bash
+solana program deploy target/deploy/solana_transfer_program.so
+
+
+```
+
+### Step 2: Interact with the Program using JavaScript
+
+**Step 2.1:** Create a new NPM project and install Solana Web3.js:
+
+```bash
+mkdir solana-transfer-client
+cd solana-transfer-client
+npm init -y
+npm install @solana/web3.js
+```
+
+**Step 2.2:** Write a script to interact with the Solana program:
+
+Create `index.js` with the following content (update the path to your home directory and program ID):
+```javascript
+const solanaWeb3 = require('@solana/web3.js');
+const fs = require('fs');
+const path = require('path');
+
+(async () => {
+    // Connect to the cluster
+    const connection = new solanaWeb3.Connection(
+        solanaWeb3.clusterApiUrl('devnet'),
+        'confirmed',
+    );
+
+    // Load the from wallet
+    const fromWallet = solanaWeb3.Keypair.fromSecretKey(
+        Uint8Array.from(JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '/Users/<your-username>/.config/solana/devnet-keypair.json'), 'utf8')))
+    );
+
+    // Create a new wallet to receive the funds
+    const toWallet = solanaWeb3.Keypair.generate();
+
+    // Airdrop some SOL to the fromWallet
+    const airdropSignature = await connection.requestAirdrop(
+        fromWallet.publicKey,
+        solanaWeb3.LAMPORTS_PER_SOL,
+    );
+
+    await connection.confirmTransaction(airdropSignature);
+    console.log('Airdrop complete to From Wallet:', fromWallet.publicKey.toBase58());
+
+    // Deploy Program ID
+    const programId = new solanaWeb3.PublicKey('YourProgramIDHere');  // Replace with your deployed program ID
+    const systemProgramId = solanaWeb3.SystemProgram.programId;
+
+    const transaction = new solanaWeb3.Transaction().add(
+        new solanaWeb3.TransactionInstruction({
+            programId,
+            keys: [
+                { pubkey: fromWallet.publicKey, isSigner: true, isWritable: true },
+                { pubkey: toWallet.publicKey, isSigner: false, isWritable: true },
+                { pubkey: systemProgramId, isSigner: false, isWritable: false },
+            ],
+            data: Buffer.alloc(0), // No additional data
+        })
+    );
+
+    // Sign and send the transaction
+    const signature = await solanaWeb3.sendAndConfirmTransaction(
+        connection,
+        transaction,
+        [fromWallet]
+    );
+
+    console.log('Transaction complete with signature:', signature);
+    console.log('Funds transferred to:', toWallet.publicKey.toBase58());
+})();
+```
+
+**Step 2.3:** Run the script:
+
+```bash
+node index.js
+```
+
+### Explanation
+
+1. **Rust Program:**
+   - This Rust program defines an entry point using `entrypoint!(process_instruction)`.
+   - Reads account information to transfer SOL from the `from_account` to the `to_account`.
+   - Uses the System Program’s transfer instruction for moving the funds.
+
+2. **JavaScript Client:**
+   - Connects to Solana devnet, loads a wallet, and airdrops 1 SOL to fund the transaction.
+   - Prepares and sends a transaction to the deployed Solana program, transferring SOL from `fromWallet` to `toWallet`.
+
+**Important:** Replace `'YourProgramIDHere'` with the actual program ID from the deployment step and update the path to the keypair file in `index.js`.
+
+### Running in Visual Studio Code
+
+1. Open the project folder containing `solana_transfer_program` and `solana-transfer-client` in Visual Studio Code.
+
+2. Use the integrated terminal in VS Code for running commands (`cargo build-bpf`, `solana program deploy`, and `node index.js`).
+
+These steps make developing, deploying, and interacting with Solana programs straightforward, even on an M1 Mac.
+
+____________
+
+Run 17.05.24
+
+until remember grunt stuff brief vintage because warfare fresh embark upset curious post team cactus
+
+NOTE! This passphrase improves security of the recovery seed phrase NOT the
+keypair file itself, which is stored as insecure plain text
+
+BIP39 Passphrase (empty for none): 
+Enter same passphrase again: 
+
+Wrote new keypair to /Users/nika/.config/solana/devnet-keypair.json
+=================================================================================
+pubkey: 6R8E87v7M2ws2pBqAKkMTD9cYDEoY5UMf4753WfAutHk
+=================================================================================
+Save this seed phrase and your BIP39 passphrase to recover your new keypair:
+giggle trap seminar actress kangaroo second palace side mushroom blast wreck lift
+=================================================================================
+
+__
+
+Program Id: 6pJaNqhR3nq7ZhTgEfjZB2N9XFvSeuyqRHeq5jFEqqs6
+
+___
+
+Airdrop complete to From Wallet: 6R8E87v7M2ws2pBqAKkMTD9cYDEoY5UMf4753WfAutHk
+Transaction complete with signature: 633PQk82PMPHq1TTJfKNVmNNFQbLXfX4kjAzjzqUvAhdWsGpVnucXRYDfz7TzetfpZtKGKoRWDWjrReF1ZRvgNA
+Funds transferred to: DLzB7ez8UJ7wL9ZweTXc7guhqN5bsRaJyNYf8yqVetJh
+
+https://solscan.io/tx/633PQk82PMPHq1TTJfKNVmNNFQbLXfX4kjAzjzqUvAhdWsGpVnucXRYDfz7TzetfpZtKGKoRWDWjrReF1ZRvgNA?cluster=devnet
+
+____________
+

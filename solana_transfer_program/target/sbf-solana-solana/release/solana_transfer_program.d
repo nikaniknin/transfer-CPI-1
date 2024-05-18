@@ -1,0 +1,1 @@
+/Users/nika/Projects/Solana/Experiments/CGPT-1/solana_transfer_program/target/sbf-solana-solana/release/solana_transfer_program.so: /Users/nika/Projects/Solana/Experiments/CGPT-1/solana_transfer_program/src/lib.rs
